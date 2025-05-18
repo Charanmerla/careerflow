@@ -1,0 +1,31 @@
+
+/* Remove unnecessary root styles that may cause layout issues */
+#root {
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  text-align: initial;
+}
+
+/* Add hover effect utilities */
+.hover-scale {
+  transition: transform 0.2s ease;
+}
+
+.hover-scale:hover {
+  transform: scale(1.03);
+}
+
+/* Improved button transitions */
+button {
+  transition: all 0.2s ease;
+}
+
+/* Improve card transitions */
+.card {
+  transition: box-shadow 0.3s ease, transform 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
