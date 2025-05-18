@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -7,6 +7,11 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
+import ProfileInfo from "./ProfileInfo";
+import { useAuth } from "@/hooks/use-auth";
+import { db } from "@/lib/firebase";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { toast } from "sonner";
 
 interface ProfileModalProps {
   isOpen: boolean;
@@ -14,37 +19,58 @@ interface ProfileModalProps {
 }
 
 const ProfileModal = ({ isOpen, onClose }: ProfileModalProps) => {
+  const { user } = useAuth();
+  const [profile, setProfile] = useState<{
+    name: string;
+    email: string;
+    jobTitle: string;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (user && isOpen) {
+      setLoading(true);
+      getDoc(doc(db, "users", user.uid)).then((snap) => {
+        if (snap.exists()) {
+          setProfile(snap.data() as any);
+        }
+        setLoading(false);
+      });
+    }
+  }, [user, isOpen]);
+
+  const handleUpdate = async (name: string, jobTitle: string) => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      await updateDoc(doc(db, "users", user.uid), { name, jobTitle });
+      setProfile((prev) => (prev ? { ...prev, name, jobTitle } : prev));
+      toast("Profile updated!");
+    } catch (e) {
+      toast("Failed to update profile");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[400px] p-0 overflow-hidden max-h-[90vh] overflow-y-auto">
-        <div className="absolute right-4 top-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onClose}
-            className="rounded-full h-6 w-6 p-0"
-          >
-            <X className="h-4 w-4" />
-            <span className="sr-only">Close</span>
-          </Button>
-        </div>
         <div className="bg-white p-6 pt-10">
           <DialogHeader className="text-center">
             <DialogTitle className="text-xl font-bold mb-2">
               Profile
             </DialogTitle>
           </DialogHeader>
-          {/* User info placeholder */}
-          <div className="flex flex-col items-center gap-3 mt-4">
-            <div className="h-16 w-16 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-3xl font-bold">
-              U
-            </div>
-            <div className="text-lg font-semibold">User Name</div>
-            <div className="text-gray-500 text-sm">user@email.com</div>
-            <Button className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium">
-              Edit Profile
-            </Button>
-          </div>
+          {profile && (
+            <ProfileInfo
+              name={profile.name}
+              email={profile.email}
+              jobTitle={profile.jobTitle}
+              onUpdate={handleUpdate}
+              loading={loading}
+            />
+          )}
         </div>
       </DialogContent>
     </Dialog>

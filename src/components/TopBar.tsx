@@ -11,11 +11,22 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import PremiumModal from "./PremiumModal";
+import ProfileModal from "./ProfileModal";
+import { useNavigate } from "react-router-dom";
+import { signOut } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 const TopBar = () => {
   const { toggleSidebar } = useSidebar();
   const isMobile = useIsMobile();
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    navigate("/login");
+  };
 
   return (
     <div className="h-[60px] bg-white border-b border-gray-200 sticky top-0 z-10 flex items-center justify-between px-2 sm:px-4 shadow-sm w-full">
@@ -67,7 +78,10 @@ const TopBar = () => {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56 mt-1">
-            <DropdownMenuItem className="cursor-pointer">
+            <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() => setIsProfileModalOpen(true)}
+            >
               <User className="mr-2 h-4 w-4" />
               <span>Profile</span>
             </DropdownMenuItem>
@@ -76,7 +90,10 @@ const TopBar = () => {
               <span>Notifications</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="cursor-pointer text-red-600 hover:text-red-700">
+            <DropdownMenuItem
+              className="cursor-pointer text-red-600 hover:text-red-700"
+              onClick={handleLogout}
+            >
               <LogOut className="mr-2 h-4 w-4" />
               <span>Log out</span>
             </DropdownMenuItem>
@@ -88,6 +105,10 @@ const TopBar = () => {
       <PremiumModal
         isOpen={isPremiumModalOpen}
         onClose={() => setIsPremiumModalOpen(false)}
+      />
+      <ProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
       />
     </div>
   );

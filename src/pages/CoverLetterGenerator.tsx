@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -10,33 +9,161 @@ import Sidebar from "@/components/Sidebar";
 import TopBar from "@/components/TopBar";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { toast } from "@/hooks/use-toast";
+import { generateCoverLetter } from "@/services/ai";
+import mammoth from "mammoth";
+import * as pdfjsLib from "pdfjs-dist";
+
+// Set workerSrc for pdfjs to the local public path (Vite compatible)
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
+
+// Utility: Remove placeholder lines from AI output
+function removePlaceholders(text: string) {
+  const placeholderPatterns = [
+    /^\[.*?\]$/i, // Any line that is just [something]
+    /^\[Your Name\]$/i,
+    /^\[Your Address\]$/i,
+    /^\[City, State, ZIP\]$/i,
+    /^\[Your Email\]$/i,
+    /^\[Your Phone Number\]$/i,
+    /^\[Date\]$/i,
+    /^\[Company Name\]$/i,
+    /^\[Recipient Name\]$/i,
+    /^\[Recipient Address\]$/i,
+    /^\[Recipient Email\]$/i,
+    /^\[Recipient Phone Number\]$/i,
+    /^\[Hiring Manager\]$/i,
+    /^\[.*?\]$/i, // catch-all for any other bracketed line
+  ];
+  return text
+    .split("\n")
+    .filter(
+      (line) =>
+        !placeholderPatterns.some((pattern) => pattern.test(line.trim()))
+    )
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n"); // Remove extra blank lines
+}
+
+// Motivational messages for loading
+const loadingMessages = [
+  "Crafting a cover letter that stands out...",
+  "Analyzing your achievements and matching them to the job...",
+  "Highlighting your best skills for this opportunity...",
+  "Personalizing your story for the perfect fit...",
+  "AI is working its magic to impress the hiring manager...",
+  "Almost there! Your tailored cover letter is on its way...",
+];
+function getRandomLoadingMessage() {
+  return loadingMessages[Math.floor(Math.random() * loadingMessages.length)];
+}
 
 const CoverLetterGenerator = () => {
   const [resume, setResume] = useState<File | null>(null);
-  const [generatedContent, setGeneratedContent] = useState<string>('');
+  const [resumeText, setResumeText] = useState<string>("");
+  const [generatedContent, setGeneratedContent] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setResume(e.target.files[0]);
+  const [jobTitle, setJobTitle] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [skills, setSkills] = useState("");
+  const [experience, setExperience] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Helper: Parse resume file
+  const parseResumeFile = async (file: File) => {
+    if (file.type === "application/pdf") {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let text = "";
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        text += content.items.map((item: any) => item.str).join(" ") + "\n";
+      }
+      return text;
+    } else if (
+      file.type ===
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      file.name.endsWith(".docx")
+    ) {
+      const arrayBuffer = await file.arrayBuffer();
+      const { value } = await mammoth.extractRawText({ arrayBuffer });
+      return value;
+    } else {
+      toast({
+        title: "Unsupported file type",
+        description: "Only PDF and DOCX files are supported.",
+        variant: "destructive",
+      });
+      return "";
     }
   };
 
-  const handleGenerate = () => {
-    // This is a mock generation process, in a real app this would call an API
+  // Handle file upload reliably
+  const handleUploadButtonClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setResume(file);
+      const text = await parseResumeFile(file);
+      setResumeText(text);
+      localStorage.setItem("uploadedResumeText", text);
+      console.log("[Resume Parsed Text]", text);
+      toast({
+        title: "Resume uploaded",
+        description: "Resume parsed and ready for AI.",
+      });
+    }
+  };
+
+  // Generate cover letter using OpenAI
+  const handleGenerate = async () => {
+    if (!jobTitle.trim()) {
+      toast({
+        title: "Job Title required",
+        description: "Please enter a job title.",
+        variant: "destructive",
+      });
+      return;
+    }
     setIsGenerating(true);
-    
-    // Simulate API call delay
-    setTimeout(() => {
-      const mockContent = "Dear Hiring Manager,\n\nI am writing to express my interest in the [Job Title] position at [Company Name]. With my background in [relevant field] and experience in [relevant skills], I am confident that I would be a valuable addition to your team.\n\nThank you for considering my application. I look forward to the opportunity to discuss my qualifications further.\n\nSincerely,\n[Your Name]";
-      setGeneratedContent(mockContent);
-      setIsGenerating(false);
-      
+    setError(null);
+    try {
+      // Compose prompt: instruct AI to extract candidate info from resume and interviewer/company info from job description, and strictly avoid placeholders
+      const aiPrompt = `You are an expert career coach and writer. Write a professional, personalized cover letter for the following job description, using the candidate's real resume information. Extract the candidate's name, address, email, and phone from the resume text below and use them in the cover letter header. Extract the interviewer/hiring manager/company details from the job description and use them in the recipient section. Do not use or include any placeholder fields, bracketed text, or template markers such as [Your Name], [Your Address], [City, State, ZIP], [Your Email], [Your Phone Number], or similar. Only use real information you extract from the resume and job description. If any information is missing, simply omit that line. Highlight the most relevant skills and experiences from the resume that match the job description. Make the letter engaging, achievement-focused, and tailored to the company and role.\n\nJob Description:\n${
+        prompt || ""
+      }\n\n[RESUME TEXT]\n${resumeText}\n[END RESUME TEXT]`;
+      const coverLetter = await generateCoverLetter({
+        jobTitle,
+        companyName,
+        skills,
+        experience,
+        prompt: aiPrompt,
+      });
+      const cleanedCoverLetter = removePlaceholders(coverLetter);
+      setGeneratedContent(cleanedCoverLetter);
+      localStorage.setItem("generatedCoverLetter", cleanedCoverLetter);
       toast({
         title: "Cover letter generated",
         description: "Your cover letter has been generated successfully.",
       });
-    }, 1500);
+    } catch (error: any) {
+      setError(
+        "Sorry, something went wrong while generating your cover letter. Please try again later."
+      );
+      toast({
+        title: "Error",
+        description:
+          "Sorry, something went wrong while generating your cover letter. Please try again later.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const downloadAsPDF = () => {
@@ -44,24 +171,24 @@ const CoverLetterGenerator = () => {
       toast({
         title: "No content to download",
         description: "Please generate a cover letter first.",
-        variant: "destructive"
+        variant: "destructive",
       });
       return;
     }
-    
+
     // In a real implementation, this would use a library like jsPDF or call a backend API
     // This is a simplified version for demonstration purposes
     toast({
       title: "Download started",
       description: "Your PDF is being prepared for download.",
     });
-    
+
     // Simulate download delay
     setTimeout(() => {
-      const element = document.createElement('a');
-      const file = new Blob([generatedContent], {type: 'application/pdf'});
+      const element = document.createElement("a");
+      const file = new Blob([generatedContent], { type: "application/pdf" });
       element.href = URL.createObjectURL(file);
-      element.download = 'cover-letter.pdf';
+      element.download = "cover-letter.pdf";
       document.body.appendChild(element);
       element.click();
       document.body.removeChild(element);
@@ -73,24 +200,24 @@ const CoverLetterGenerator = () => {
       toast({
         title: "No content to download",
         description: "Please generate a cover letter first.",
-        variant: "destructive"
+        variant: "destructive",
       });
       return;
     }
-    
+
     // In a real implementation, this would use a library to properly format DOC files
     // This is a simplified version for demonstration purposes
     toast({
       title: "Download started",
       description: "Your DOC file is being prepared for download.",
     });
-    
+
     // Simulate download delay
     setTimeout(() => {
-      const element = document.createElement('a');
-      const file = new Blob([generatedContent], {type: 'application/msword'});
+      const element = document.createElement("a");
+      const file = new Blob([generatedContent], { type: "application/msword" });
       element.href = URL.createObjectURL(file);
-      element.download = 'cover-letter.doc';
+      element.download = "cover-letter.doc";
       document.body.appendChild(element);
       element.click();
       document.body.removeChild(element);
@@ -98,7 +225,9 @@ const CoverLetterGenerator = () => {
   };
 
   return (
-    <SidebarProvider defaultOpen={!window.matchMedia("(max-width: 768px)").matches}>
+    <SidebarProvider
+      defaultOpen={!window.matchMedia("(max-width: 768px)").matches}
+    >
       <div className="flex h-screen w-full bg-gray-50">
         {/* Left Sidebar */}
         <Sidebar />
@@ -107,7 +236,7 @@ const CoverLetterGenerator = () => {
         <SidebarInset className="flex-1 flex flex-col overflow-hidden">
           {/* Top Bar */}
           <TopBar />
-          
+
           {/* Content Area */}
           <div className="flex-1 overflow-auto">
             <div className="p-6 max-w-5xl mx-auto">
@@ -115,9 +244,15 @@ const CoverLetterGenerator = () => {
                 <div className="bg-blue-100 text-blue-600 h-8 w-8 rounded-full flex items-center justify-center mr-3">
                   <span className="text-lg">AI</span>
                 </div>
-                <h1 className="text-xl font-medium">AI Cover Letter Generator</h1>
-                
-                <Button variant="outline" size="sm" className="ml-auto flex items-center gap-2">
+                <h1 className="text-xl font-medium">
+                  AI Cover Letter Generator
+                </h1>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="ml-auto flex items-center gap-2"
+                >
                   View History
                 </Button>
               </div>
@@ -129,9 +264,9 @@ const CoverLetterGenerator = () => {
                     <Label htmlFor="job-description" className="mb-1 block">
                       Job Description*
                     </Label>
-                    <Textarea 
-                      id="job-description" 
-                      placeholder="Enter Job Description" 
+                    <Textarea
+                      id="job-description"
+                      placeholder="Enter Job Description"
                       className="min-h-[120px]"
                     />
                     <div className="mt-2">
@@ -140,66 +275,88 @@ const CoverLetterGenerator = () => {
                       </Button>
                     </div>
                   </div>
-                  
+
                   <div>
                     <Label htmlFor="job-title" className="mb-1 block">
                       Job Title*
                     </Label>
-                    <Input 
+                    <Input
                       id="job-title"
-                      placeholder="Enter Job Title" 
+                      placeholder="Enter Job Title"
+                      value={jobTitle}
+                      onChange={(e) => setJobTitle(e.target.value)}
                     />
                   </div>
-                  
+
                   <div>
                     <Label htmlFor="company-name" className="mb-1 block">
                       Company Name
                     </Label>
-                    <Input 
+                    <Input
                       id="company-name"
-                      placeholder="Enter Company Name" 
+                      placeholder="Enter Company Name"
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
                     />
                   </div>
 
                   <div className="space-y-3">
                     <h3 className="text-sm font-medium">Your Profile*</h3>
-                    
+
                     <div className="flex items-center space-x-2">
-                      <input 
-                        type="radio" 
-                        id="resume-upload" 
-                        name="profile-type" 
-                        className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500" 
+                      <input
+                        type="radio"
+                        id="resume-upload"
+                        name="profile-type"
+                        className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
                         defaultChecked
                       />
                       <Label htmlFor="resume-upload">Resume Upload</Label>
                     </div>
-                    
+
                     <div className="border rounded-md p-4 bg-white">
-                      <p className="text-sm text-gray-700 mb-4">Upload your resume</p>
-                      
+                      <p className="text-sm text-gray-700 mb-4">
+                        Upload your resume
+                      </p>
+
                       <div className="border-2 border-dashed border-gray-300 rounded-md p-8 text-center">
                         <div className="mx-auto flex justify-center mb-3">
                           <Upload className="h-8 w-8 text-blue-500" />
                         </div>
-                        <p className="text-sm font-medium mb-2">Add your Resume</p>
-                        <p className="text-xs text-gray-500 mb-3">File names cannot contain special characters and should be in either .doc, .docx, or .pdf</p>
-                        <label htmlFor="file-upload">
-                          <Button 
-                            variant="outline" 
-                            className="bg-blue-500 text-white border-0 hover:bg-blue-600"
+                        <p className="text-sm font-medium mb-2">
+                          Add your Resume
+                        </p>
+                        <p className="text-xs text-gray-500 mb-3">
+                          File names cannot contain special characters and
+                          should be in either .doc, .docx, or .pdf
+                        </p>
+                        <Button
+                          variant="outline"
+                          className="bg-blue-500 text-white border-0 hover:bg-blue-600"
+                          type="button"
+                          onClick={handleUploadButtonClick}
+                        >
+                          Choose or Upload
+                        </Button>
+                        {resume && (
+                          <div
+                            className="mt-2 text-xs text-gray-700 truncate"
+                            title={resume.name}
                           >
-                            Choose or Upload
-                          </Button>
-                          <input
-                            id="file-upload"
-                            name="file-upload"
-                            type="file"
-                            className="sr-only"
-                            accept=".doc,.docx,.pdf"
-                            onChange={handleFileChange}
-                          />
-                        </label>
+                            Uploaded:{" "}
+                            <span className="font-medium">{resume.name}</span>
+                          </div>
+                        )}
+                        <input
+                          ref={fileInputRef}
+                          id="file-upload"
+                          name="file-upload"
+                          type="file"
+                          className="sr-only"
+                          accept=".doc,.docx,.pdf"
+                          onChange={handleFileChange}
+                          tabIndex={-1}
+                        />
                       </div>
                     </div>
                   </div>
@@ -208,26 +365,34 @@ const CoverLetterGenerator = () => {
                     <h3 className="text-sm font-medium mb-3">Template</h3>
                     <div className="border rounded-md p-4 bg-white flex items-center justify-between">
                       <div className="flex items-center">
-                        <input 
-                          type="radio" 
-                          id="default-template" 
-                          name="template" 
-                          className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500" 
+                        <input
+                          type="radio"
+                          id="default-template"
+                          name="template"
+                          className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
                           defaultChecked
                         />
-                        <Label htmlFor="default-template" className="ml-2">Default</Label>
+                        <Label htmlFor="default-template" className="ml-2">
+                          Default
+                        </Label>
                       </div>
                       <div className="flex gap-2">
-                        <Button variant="outline" size="sm">Preview</Button>
-                        <Button variant="outline" size="sm">Change</Button>
+                        <Button variant="outline" size="sm">
+                          Preview
+                        </Button>
+                        <Button variant="outline" size="sm">
+                          Change
+                        </Button>
                       </div>
                     </div>
                   </div>
-                  
+
                   <div>
                     <details className="group">
                       <summary className="flex items-center justify-between cursor-pointer py-2">
-                        <h3 className="text-sm font-medium">Advanced Settings</h3>
+                        <h3 className="text-sm font-medium">
+                          Advanced Settings
+                        </h3>
                         <svg
                           className="h-5 w-5 text-gray-500 group-open:transform group-open:rotate-180"
                           xmlns="http://www.w3.org/2000/svg"
@@ -243,18 +408,28 @@ const CoverLetterGenerator = () => {
                       </summary>
                       <div className="pt-2 pb-4">
                         <div className="mb-4">
-                          <Label htmlFor="context" className="mb-1 block">Additional Context</Label>
-                          <Textarea 
-                            id="context" 
-                            placeholder="Enter any additional instructions or information as a prompt" 
+                          <Label htmlFor="context" className="mb-1 block">
+                            Additional Context
+                          </Label>
+                          <Textarea
+                            id="context"
+                            placeholder="Enter any additional instructions or information as a prompt"
                             className="min-h-[100px]"
+                            value={prompt}
+                            onChange={(e) => setPrompt(e.target.value)}
                           />
                         </div>
-                        
+
                         <div className="mb-4">
                           <p className="text-sm font-medium mb-2">Tone</p>
                           <div className="flex flex-wrap gap-3">
-                            {["Professional", "Casual", "Enthusiastic", "Informational", "Custom"].map(tone => (
+                            {[
+                              "Professional",
+                              "Casual",
+                              "Enthusiastic",
+                              "Informational",
+                              "Custom",
+                            ].map((tone) => (
                               <div key={tone} className="flex items-center">
                                 <input
                                   type="radio"
@@ -263,16 +438,21 @@ const CoverLetterGenerator = () => {
                                   className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
                                   defaultChecked={tone === "Professional"}
                                 />
-                                <Label htmlFor={`tone-${tone.toLowerCase()}`} className="ml-2">{tone}</Label>
+                                <Label
+                                  htmlFor={`tone-${tone.toLowerCase()}`}
+                                  className="ml-2"
+                                >
+                                  {tone}
+                                </Label>
                               </div>
                             ))}
                           </div>
                         </div>
-                        
+
                         <div className="mb-4">
                           <p className="text-sm font-medium mb-2">Length</p>
                           <div className="flex gap-4">
-                            {["Short", "Medium", "Long"].map(length => (
+                            {["Short", "Medium", "Long"].map((length) => (
                               <div key={length} className="flex items-center">
                                 <input
                                   type="radio"
@@ -281,14 +461,21 @@ const CoverLetterGenerator = () => {
                                   className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
                                   defaultChecked={length === "Medium"}
                                 />
-                                <Label htmlFor={`length-${length.toLowerCase()}`} className="ml-2">{length}</Label>
+                                <Label
+                                  htmlFor={`length-${length.toLowerCase()}`}
+                                  className="ml-2"
+                                >
+                                  {length}
+                                </Label>
                               </div>
                             ))}
                           </div>
                         </div>
-                        
+
                         <div>
-                          <Label htmlFor="language" className="mb-1 block">Language</Label>
+                          <Label htmlFor="language" className="mb-1 block">
+                            Language
+                          </Label>
                           <select
                             id="language"
                             className="block w-full rounded-md border border-gray-300 py-2 px-3 focus:border-blue-500 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
@@ -303,18 +490,52 @@ const CoverLetterGenerator = () => {
                       </div>
                     </details>
                   </div>
-                  
+
                   <div>
-                    <Button 
+                    <Button
                       className="w-full py-6 text-base bg-blue-600 hover:bg-blue-700"
                       onClick={handleGenerate}
                       disabled={isGenerating}
                     >
-                      {isGenerating ? "Generating..." : "Generate"}
+                      {isGenerating ? (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+                          <div className="flex flex-col items-center justify-center bg-white rounded-lg shadow-lg px-8 py-8 min-w-[280px]">
+                            <svg
+                              className="animate-spin h-10 w-10 text-blue-500 mb-4"
+                              xmlns="http://www.w3.org/2000/svg"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                            >
+                              <circle
+                                className="opacity-25"
+                                cx="12"
+                                cy="12"
+                                r="10"
+                                stroke="currentColor"
+                                strokeWidth="4"
+                              />
+                              <path
+                                className="opacity-75"
+                                fill="currentColor"
+                                d="M4 12a8 8 0 018-8v8z"
+                              />
+                            </svg>
+                            <h2 className="text-lg font-semibold text-blue-700 mb-2">
+                              Generating your cover letter...
+                            </h2>
+                            <p className="text-gray-500 text-center text-sm">
+                              This may take a few moments. Please stay on this
+                              page.
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        "Generate"
+                      )}
                     </Button>
                   </div>
                 </div>
-                
+
                 {/* Right column - Results */}
                 <div>
                   <Card className="bg-blue-50 h-full">
@@ -323,7 +544,7 @@ const CoverLetterGenerator = () => {
                         <h3 className="font-medium flex items-center">
                           Result
                         </h3>
-                        
+
                         <div className="flex gap-2">
                           {generatedContent && (
                             <>
@@ -351,7 +572,9 @@ const CoverLetterGenerator = () => {
                       </div>
                       <div className="bg-white rounded-md border border-gray-200 p-4 flex-1 overflow-auto">
                         {generatedContent ? (
-                          <pre className="whitespace-pre-wrap font-sans">{generatedContent}</pre>
+                          <pre className="whitespace-pre-wrap font-sans">
+                            {generatedContent}
+                          </pre>
                         ) : (
                           <p className="text-gray-500 flex items-center justify-center h-full">
                             Your AI generated content will show here
@@ -366,6 +589,34 @@ const CoverLetterGenerator = () => {
           </div>
         </SidebarInset>
       </div>
+      {/* Error Overlay */}
+      {error && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="flex flex-col items-center justify-center bg-white rounded-lg shadow-lg px-8 py-8 min-w-[280px]">
+            <svg
+              className="h-10 w-10 text-red-500 mb-4"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+            <h2 className="text-lg font-semibold text-red-700 mb-2">Error</h2>
+            <p className="text-gray-500 text-center text-sm mb-4">{error}</p>
+            <button
+              className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              onClick={() => setError(null)}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </SidebarProvider>
   );
 };
