@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Upload, FileText, Download } from "lucide-react";
+import { Upload, FileText, Download, Copy } from "lucide-react";
 import Sidebar from "@/components/Sidebar";
 import TopBar from "@/components/TopBar";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
@@ -69,6 +69,7 @@ const CoverLetterGenerator = () => {
   const [prompt, setPrompt] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Helper: Parse resume file
   const parseResumeFile = async (file: File) => {
@@ -166,6 +167,18 @@ const CoverLetterGenerator = () => {
     }
   };
 
+  const handleCopyToClipboard = async () => {
+    if (generatedContent) {
+      await navigator.clipboard.writeText(generatedContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+      toast({
+        title: "Copied!",
+        description: "Cover letter copied to clipboard.",
+      });
+    }
+  };
+
   const downloadAsPDF = () => {
     if (!generatedContent) {
       toast({
@@ -175,24 +188,23 @@ const CoverLetterGenerator = () => {
       });
       return;
     }
-
-    // In a real implementation, this would use a library like jsPDF or call a backend API
-    // This is a simplified version for demonstration purposes
-    toast({
-      title: "Download started",
-      description: "Your PDF is being prepared for download.",
+    import("jspdf").then((jsPDFModule) => {
+      const doc = new jsPDFModule.jsPDF();
+      doc.setFontSize(10); // Decrease font size
+      const pageHeight = doc.internal.pageSize.height;
+      const lineHeight = 7;
+      const lines = doc.splitTextToSize(generatedContent, 180);
+      let cursorY = 10;
+      lines.forEach((line) => {
+        if (cursorY + lineHeight > pageHeight - 10) {
+          doc.addPage();
+          cursorY = 10;
+        }
+        doc.text(line, 10, cursorY);
+        cursorY += lineHeight;
+      });
+      doc.save("cover-letter.pdf");
     });
-
-    // Simulate download delay
-    setTimeout(() => {
-      const element = document.createElement("a");
-      const file = new Blob([generatedContent], { type: "application/pdf" });
-      element.href = URL.createObjectURL(file);
-      element.download = "cover-letter.pdf";
-      document.body.appendChild(element);
-      element.click();
-      document.body.removeChild(element);
-    }, 500);
   };
 
   const downloadAsDoc = () => {
@@ -204,24 +216,17 @@ const CoverLetterGenerator = () => {
       });
       return;
     }
-
-    // In a real implementation, this would use a library to properly format DOC files
-    // This is a simplified version for demonstration purposes
-    toast({
-      title: "Download started",
-      description: "Your DOC file is being prepared for download.",
-    });
-
-    // Simulate download delay
-    setTimeout(() => {
-      const element = document.createElement("a");
-      const file = new Blob([generatedContent], { type: "application/msword" });
-      element.href = URL.createObjectURL(file);
-      element.download = "cover-letter.doc";
-      document.body.appendChild(element);
-      element.click();
-      document.body.removeChild(element);
-    }, 500);
+    // Use proper MIME type and encoding for DOC
+    const header = `data:application/msword;charset=utf-8,`;
+    const content = `<!DOCTYPE html><html><head><meta charset='utf-8'></head><body><pre>${generatedContent
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")}</pre></body></html>`;
+    const element = document.createElement("a");
+    element.href = header + encodeURIComponent(content);
+    element.download = "cover-letter.doc";
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
   };
 
   return (
@@ -498,8 +503,11 @@ const CoverLetterGenerator = () => {
                       disabled={isGenerating}
                     >
                       {isGenerating ? (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-                          <div className="flex flex-col items-center justify-center bg-white rounded-lg shadow-lg px-8 py-8 min-w-[280px]">
+                        <div
+                          className="fixed inset-0 z-50 flex items-center justify-center"
+                          style={{ backdropFilter: "blur(4px)" }}
+                        >
+                          <div className="flex flex-col items-center justify-center bg-white border-2 border-blue-200 rounded-xl shadow-2xl px-10 py-8 min-w-[320px]">
                             <svg
                               className="animate-spin h-10 w-10 text-blue-500 mb-4"
                               xmlns="http://www.w3.org/2000/svg"
@@ -551,6 +559,39 @@ const CoverLetterGenerator = () => {
                               <Button
                                 variant="outline"
                                 size="sm"
+                                className={`flex items-center gap-1 text-blue-600 border-blue-600 transition-all duration-200 ${
+                                  copied
+                                    ? "bg-green-100 border-green-500 text-green-700"
+                                    : ""
+                                }`}
+                                onClick={handleCopyToClipboard}
+                                title="Copy to clipboard"
+                                disabled={copied}
+                              >
+                                {copied ? (
+                                  <svg
+                                    className="h-4 w-4 text-green-600 animate-bounce"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth="3"
+                                      d="M5 13l4 4L19 7"
+                                    />
+                                  </svg>
+                                ) : (
+                                  <Copy size={16} />
+                                )}
+                                <span className="text-xs font-medium">
+                                  {copied ? "Copied!" : ""}
+                                </span>
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
                                 className="flex items-center gap-1 text-blue-600 border-blue-600"
                                 onClick={downloadAsPDF}
                               >
@@ -591,8 +632,11 @@ const CoverLetterGenerator = () => {
       </div>
       {/* Error Overlay */}
       {error && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
-          <div className="flex flex-col items-center justify-center bg-white rounded-lg shadow-lg px-8 py-8 min-w-[280px]">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backdropFilter: "blur(4px)" }}
+        >
+          <div className="flex flex-col items-center justify-center bg-white border-2 border-red-200 rounded-xl shadow-2xl px-10 py-8 min-w-[320px]">
             <svg
               className="h-10 w-10 text-red-500 mb-4"
               fill="none"

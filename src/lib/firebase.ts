@@ -3,17 +3,15 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAl5q6ovwyThhVukomqVwuMKbUZKm93hHQ",
-  authDomain: "career-focus-7b1aa.firebaseapp.com",
-  projectId: "career-focus-7b1aa",
-  storageBucket: "career-focus-7b1aa.firebasestorage.app",
-  messagingSenderId: "327252893584",
-  appId: "1:327252893584:web:e4d42027397cb5811fdd15",
-  measurementId: "G-3JFNSDERGJ",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-
-export { app, auth, db };
+export const auth = getAuth(app);
+export const db = getFirestore(app);
